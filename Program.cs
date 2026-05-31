@@ -4,11 +4,11 @@ using HedgePair.API.Middleware;
 using HedgePair.API.Repositories;
 using HedgePair.API.Services;
 using Microsoft.EntityFrameworkCore;
-using System;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // ── Configuration ─────────────────────────────────────────────────────────────
+
 // Azure Key Vault integration (Production only)
 if (builder.Environment.IsProduction())
 {
@@ -54,13 +54,21 @@ builder.Services.AddSwaggerGen(c =>
         Description = "REST API for creating, viewing and deleting Hedge Pairs. " +
                       "Built with .NET 8 | Azure SQL | Azure App Service."
     });
+
     var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
     var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
-    if (File.Exists(xmlPath)) c.IncludeXmlComments(xmlPath);
+
+    if (File.Exists(xmlPath))
+        c.IncludeXmlComments(xmlPath);
 });
 
-// Application Insights
-builder.Services.AddApplicationInsightsTelemetry();
+// ✅ FIX: Application Insights only if connection string exists
+var aiConn = builder.Configuration["APPLICATIONINSIGHTS_CONNECTION_STRING"];
+
+if (!string.IsNullOrEmpty(aiConn))
+{
+    builder.Services.AddApplicationInsightsTelemetry();
+}
 
 // CORS — allow React dev server + Azure Static Web App
 builder.Services.AddCors(options =>
@@ -78,6 +86,7 @@ builder.Services.AddCors(options =>
 });
 
 // ── Pipeline ──────────────────────────────────────────────────────────────────
+
 var app = builder.Build();
 
 // Auto-apply EF Core migrations on startup
@@ -92,12 +101,13 @@ app.UseMiddleware<GlobalExceptionMiddleware>();
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
-    app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "Hedge Pair API v1"));
+    app.UseSwaggerUI();
 }
 
 app.UseHttpsRedirection();
 app.UseCors("AllowReactApp");
 app.UseAuthorization();
+
 app.MapControllers();
 
 app.Run();

@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 
 namespace HedgePair.API.Controllers;
 
-/// <summary>Provides financial instrument data for UI dropdown population.</summary>
+/// <summary>Provides financial instrument data for UI drop['l=[o=\[down population.</summary>
 [ApiController]
 [Route("api/financial-instrument")]
 [Produces("application/json")]
