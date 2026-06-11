@@ -1,86 +1,109 @@
 ﻿using HedgePair.API.Data;
 using HedgePair.API.Interfaces;
+using HedgePair.API.Middleware;
 using HedgePair.API.Repositories;
 using HedgePair.API.Services;
 using Microsoft.EntityFrameworkCore;
-using Azure.Identity;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ───────────────── CONFIGURATION ─────────────────
-
-// ✅ Load Key Vault (only in Production)
+// ── Configuration ─────────────────────────────────────────────────────────────
+// Azure Key Vault integration (Production only)
 if (builder.Environment.IsProduction())
 {
     var keyVaultUri = builder.Configuration["KeyVaultUri"];
-
     if (!string.IsNullOrEmpty(keyVaultUri))
     {
         builder.Configuration.AddAzureKeyVault(
             new Uri(keyVaultUri),
-            new DefaultAzureCredential());
+            new Azure.Identity.DefaultAzureCredential());
     }
 }
 
-// ───────────────── SERVICES ─────────────────
+// ── Services ──────────────────────────────────────────────────────────────────
 
-// ✅ Database (Azure SQL)
+// Database
+Console.WriteLine("Connection: " + builder.Configuration.GetConnectionString("DefaultConnection"));
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(
         builder.Configuration.GetConnectionString("DefaultConnection"),
         sqlOptions => sqlOptions.EnableRetryOnFailure(
             maxRetryCount: 3,
-            maxRetryDelay: TimeSpan.FromSeconds(5), errorNumbersToAdd: null)));
+            maxRetryDelay: TimeSpan.FromSeconds(5),
+            errorNumbersToAdd: null)));
 
-// ✅ Repositories
+// Repositories
 builder.Services.AddScoped<IFinancialInstrumentRepository, FinancialInstrumentRepository>();
 builder.Services.AddScoped<IHedgePairRepository, HedgePairRepository>();
 
-// ✅ Services
+// Services
 builder.Services.AddScoped<IFinancialInstrumentService, FinancialInstrumentService>();
 builder.Services.AddScoped<IHedgePairService, HedgePairService>();
 
-// ✅ Controllers
+// Controllers
 builder.Services.AddControllers();
 
-// ✅ Swagger (IMPORTANT → enable in Azure too)
+// Swagger / OpenAPI
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new()
+    {
+        Title = "Hedge Pair Management API",
+        Version = "v1",
+        Description = "REST API for creating, viewing and deleting Hedge Pairs. " +
+                      "Built with .NET 8 | Azure SQL | Azure App Service."
+    });
+    var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
+    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+    if (File.Exists(xmlPath)) c.IncludeXmlComments(xmlPath);
+});
 
-// ✅ CORS
+// Application Insights
+//builder.Services.AddApplicationInsightsTelemetry();
+
+// CORS — allow React dev server + Azure Static Web App
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowReactApp", policy =>
     {
-        policy.AllowAnyOrigin()
-              .AllowAnyHeader()
-              .AllowAnyMethod();
+        var origins = builder.Configuration
+            .GetSection("AllowedOrigins")
+            .Get<string[]>() ?? Array.Empty<string>();
+
+        policy.WithOrigins(origins)
+              .AllowAnyMethod()
+              .AllowAnyHeader();
     });
 });
 
+// ── Pipeline ──────────────────────────────────────────────────────────────────
 var app = builder.Build();
 
-// ✅ TEMP: Disable migration (prevents crash)
-// COMMENT THIS for now
-// using (var scope = app.Services.CreateScope())
-// {
-//     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-//     db.Database.Migrate();
-// }
+// Auto-apply EF Core migrations on startup
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    if (db.Database.GetPendingMigrations().Any())
+    {
+        db.Database.Migrate();
+    }
+}
 
-// ✅ Enable Swagger ALWAYS
-app.UseSwagger();
-app.UseSwaggerUI();
+app.UseMiddleware<GlobalExceptionMiddleware>();
 
-// ✅ Middleware
-app.UseCors("AllowReactApp");
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "Hedge Pair API v1"));
+}
+
 app.UseHttpsRedirection();
+app.UseCors("AllowReactApp");
 app.UseAuthorization();
-
 app.MapControllers();
 
-// ✅ 🔥 CRITICAL FIX → Required for Azure Linux
-app.Run("http://0.0.0.0:8080");
+app.Run();
 
-// For tests
+// Expose Program for integration tests
 public partial class Program { }
